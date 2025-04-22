@@ -1,0 +1,145 @@
+// Angular MSAL Authentication Sample Application
+
+// 1. app.module.ts
+import { NgModule } from '@angular/core';
+import { BrowserModule } from '@angular/platform-browser';
+import { AppRoutingModule } from './app-routing.module';
+import { AppComponent } from './app.component';
+import { HttpClientModule, HTTP_INTERCEPTORS } from '@angular/common/http';
+import {
+  MsalModule,
+  MsalInterceptor,
+  MsalGuard,
+  MsalService,
+  MSAL_INSTANCE
+} from '@azure/msal-angular';
+import { PublicClientApplication, InteractionType } from '@azure/msal-browser';
+
+export function MSALInstanceFactory() {
+  return new PublicClientApplication({
+    auth: {
+      clientId: 'YOUR_CLIENT_ID',
+      authority: 'https://login.microsoftonline.com/YOUR_TENANT_ID',
+      redirectUri: 'http://localhost:4200',
+    },
+    cache: {
+      cacheLocation: 'localStorage',
+      storeAuthStateInCookie: true,
+    },
+  });
+}
+
+@NgModule({
+  declarations: [AppComponent],
+  imports: [
+    BrowserModule,
+    AppRoutingModule,
+    HttpClientModule,
+    MsalModule.forRoot(MSALInstanceFactory(), {
+      interactionType: InteractionType.Redirect,
+      authRequest: {
+        scopes: ['user.read'],
+      },
+    }, {
+      interactionType: InteractionType.Redirect,
+      protectedResourceMap: new Map([
+        ['https://graph.microsoft.com/v1.0/me', ['user.read']],
+      ]),
+    })
+  ],
+  providers: [
+    {
+      provide: HTTP_INTERCEPTORS,
+      useClass: MsalInterceptor,
+      multi: true,
+    },
+    MsalGuard,
+    MsalService,
+  ],
+  bootstrap: [AppComponent]
+})
+export class AppModule {}
+
+// 2. app-routing.module.ts
+import { NgModule } from '@angular/core';
+import { RouterModule, Routes } from '@angular/router';
+import { MsalGuard } from '@azure/msal-angular';
+import { HomeComponent } from './home/home.component';
+import { AdminComponent } from './admin/admin.component';
+import { RoleGuard } from './role.guard';
+
+const routes: Routes = [
+  { path: '', component: HomeComponent },
+  { path: 'admin', component: AdminComponent, canActivate: [MsalGuard, RoleGuard], data: { roles: ['Admin'] } },
+];
+
+@NgModule({
+  imports: [RouterModule.forRoot(routes)],
+  exports: [RouterModule]
+})
+export class AppRoutingModule {}
+
+// 3. role.guard.ts
+import { Injectable } from '@angular/core';
+import { CanActivate, ActivatedRouteSnapshot } from '@angular/router';
+import { MsalService } from '@azure/msal-angular';
+
+@Injectable({ providedIn: 'root' })
+export class RoleGuard implements CanActivate {
+  constructor(private msalService: MsalService) {}
+
+  canActivate(route: ActivatedRouteSnapshot): boolean {
+    const expectedRoles = route.data['roles'];
+    const account = this.msalService.instance.getActiveAccount();
+    const roles = account?.idTokenClaims?.roles || [];
+    return expectedRoles.some((r: string) => roles.includes(r));
+  }
+}
+
+// 4. app.component.ts
+import { Component } from '@angular/core';
+import { MsalService } from '@azure/msal-angular';
+
+@Component({
+  selector: 'app-root',
+  template: `
+    <div>
+      <button *ngIf="!isLoggedIn" (click)="login()">Login</button>
+      <button *ngIf="isLoggedIn" (click)="logout()">Logout</button>
+      <router-outlet></router-outlet>
+    </div>
+  `
+})
+export class AppComponent {
+  constructor(public msalService: MsalService) {}
+
+  get isLoggedIn(): boolean {
+    return this.msalService.instance.getActiveAccount() != null;
+  }
+
+  login() {
+    this.msalService.loginRedirect();
+  }
+
+  logout() {
+    this.msalService.logoutRedirect();
+  }
+}
+
+// 5. home.component.ts
+import { Component } from '@angular/core';
+
+@Component({
+  selector: 'app-home',
+  template: '<h2>Home Page</h2>'
+})
+export class HomeComponent {}
+
+// 6. admin.component.ts
+import { Component } from '@angular/core';
+
+@Component({
+  selector: 'app-admin',
+  template: '<h2>Admin Page - Access Restricted to Admin Role</h2>'
+})
+export class AdminComponent {}
